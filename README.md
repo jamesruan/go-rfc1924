@@ -5,6 +5,6 @@ It uses charset of following 85 characters:
 
     0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~
 
-following six common characters are left unused:
+following 9 common characters are left unused:
 
-    '"/[]\
+    ,.:'"/[]\
