@@ -5,7 +5,9 @@
 package base85
 
 import (
-	//"io"
+	"io"
+	"bufio"
+	"errors"
 	"strconv"
 )
 
@@ -192,6 +194,132 @@ func DecodedLen(n int) int {
 	} else {
 		return s * 4
 	}
+}
+
+type encoder struct {
+	w io.Writer
+	bufin [4]byte
+	encoded [5]byte
+	fill int
+	err error
+}
+
+func (e *encoder) Write(p []byte) (n int, err error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+
+	for len(p) >= len(e.bufin) - e.fill {
+		//copy len(e.buf) - fill bytes into e.buf to make it full
+		to_copy := len(e.bufin)-e.fill
+		copy(e.bufin[e.fill:], p[:to_copy])
+		p = p[to_copy:]
+
+		//write the encoded whole buffer
+		encodeChunk(e.encoded[:], e.bufin[:])
+		_, e.err = e.w.Write(e.encoded[:])
+		if e.err != nil {
+			return n, e.err
+		}
+		n += 4
+		e.fill = 0
+	}
+	for i := 0; i < len(p); i++ {
+		e.bufin[e.fill] = p[i]
+		e.fill += 1
+	}
+	return n, e.w.(*bufio.Writer).Flush()
+}
+
+func (e *encoder) Close() error {
+	if e.err == nil && e.fill > 0 {
+		m := EncodedLen(e.fill)
+		encodeChunk(e.encoded[:m], e.bufin[:e.fill])
+		_, e.err = e.w.Write(e.encoded[:m])
+		if e.err != nil {
+			return e.err
+		}
+		e.err = e.w.(*bufio.Writer).Flush()
+	}
+	err := e.err
+	e.err = errors.New("encoder closed")
+	return err
+}
+
+// NewEncoder returns a stream encoder of w.
+// All write to the encoder is encoded into base85 and write to w.
+// The writer should call Close() to indicate the end of stream
+func NewEncoder(w io.Writer) io.WriteCloser {
+	encoder := new(encoder)
+	encoder.w = bufio.NewWriterSize(w, 1000)
+	return encoder
+}
+
+type decoder struct {
+	r io.Reader
+	bufin [1000]byte
+	decoded []byte
+	fill int
+	err error
+}
+
+// NewDecoder returns a stream decoder of r.
+// All read from the reader will read the base85 encoded string from r and decode it.
+func NewDecoder(r io.Reader) io.Reader {
+	decoder := new(decoder)
+	decoder.r = bufio.NewReaderSize(r, 1000)
+	return decoder
+}
+
+func (d *decoder) Read(p []byte) (n int, err error) {
+	if d.err != nil {
+		return 0, d.err
+	}
+
+	for len(p) > 0 {
+		// try filling the buffer
+		m, err := d.r.Read(d.bufin[d.fill:])
+		d.fill += m
+		if err != nil {
+			// no further input, decode and copy into p
+			d.decoded = make([]byte, DecodedLen(d.fill))
+			if d.err == io.EOF {
+				k, err := Decode(d.decoded, d.bufin[:d.fill])
+				copy(p, d.decoded[:k])
+				n += k
+				d.fill -= EncodedLen(k)
+				if err != nil {
+					d.err = err
+					return n, err
+				}
+			} else {
+				k, err := Decode(d.decoded, d.bufin[:d.fill - d.fill % 5])
+				copy(p, d.decoded[:k])
+				n += k
+				d.fill -= EncodedLen(k)
+				if err != nil {
+					d.err = err
+					return n, err
+				}
+			}
+			d.err = err
+			return n, d.err
+		}
+		//decode d.fill - d.fill % 5 byte of d.bufin
+		chunked_max := d.fill
+		d.fill = d.fill % 5
+		chunked_max -= d.fill
+		d.decoded = make([]byte, DecodedLen(chunked_max))
+		k, err := Decode(d.decoded, d.bufin[:chunked_max])
+		copy(p, d.decoded[:k])
+		p = p[k:]
+		n += k
+		if err != nil {
+			d.err = err
+			return n, d.err
+		}
+	}
+	return n, d.err
 }
 
 type CorruptInputError int64
