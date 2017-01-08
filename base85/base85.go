@@ -1,3 +1,7 @@
+// package base85
+// This package provides a RFC1924 implementation of base85 encoding.
+//
+// See http://www.ietf.org/rfc/rfc1924.txt
 package base85
 
 import (
@@ -29,8 +33,9 @@ func init() {
 	}
 }
 
-//encodeChunk encode 4 byte-chunk to 5 byte
-//if chunk size is less then 4, then it is padded before convertion.
+// encodeChunk encodes 4 byte-chunk to 5 byte
+// if chunk size is less then 4, then it is padded before convertion.
+// return written bytes or error
 func encodeChunk(dst, src []byte) int {
 	if len(src) == 0 {
 		return 0
@@ -67,11 +72,13 @@ func encodeChunk(dst, src []byte) int {
 }
 
 var decode_base = [5]uint32{85*85*85*85, 85*85*85, 85*85, 85, 1}
-//encodeChunk encode 5 byte-chunk to 4 byte
-//if chunk size is less then 5, then it is padded before convertion.
-func decodeChunk(dst, src []byte) (int, error) {
+
+// decodeChunk decodes 5 byte-chunk to 4 byte
+// if chunk size is less then 5, then it is padded before convertion.
+// return written bytes and error input index
+func decodeChunk(dst, src []byte) (int, int) {
 	if len(src) == 0 {
-		return 0, nil
+		return 0, 0
 	}
 	var val uint32
 	m := DecodedLen(len(src))
@@ -79,7 +86,7 @@ func decodeChunk(dst, src []byte) (int, error) {
 	for i := 0; i < len(src); i++ {
 		e := decode[src[i]]
 		if e == 0xFF {
-			return 0, CorruptInputError(i)
+			return 0, i + 1
 		}
 		buf[i] = e
 	}
@@ -102,10 +109,11 @@ func decodeChunk(dst, src []byte) (int, error) {
 	case 1:
 		dst[0] = byte((val >> 24) & 0xff)
 	}
-	return m, nil
+	return m, 0
 }
 
-//Encode encodes src into dst, return the bytes written
+// Encode encodes src into dst, return the bytes written
+// The dst must have size of EncodedLen(len(src))
 func Encode(dst, src []byte) int {
 	n := 0
 	for len(src) > 0{
@@ -120,18 +128,38 @@ func Encode(dst, src []byte) int {
 	return n
 }
 
+// EncodeToString returns the base85 encoding of src.
+func EncodeToString(src []byte) string {
+	buf := make([]byte, EncodedLen(len(src)))
+	Encode(buf, src)
+	return string(buf)
+}
+
+// DecodeString returns the bytes represented by the base85 string s.
+func DecodeString(src string) ([]byte, error) {
+	buf := make([]byte, DecodedLen(len(src)))
+	_, err := Decode(buf, []byte(src))
+	return buf, err
+}
+
+// Decode decodes src into dst, return the bytes written
+// The dst must have size of DecodedLen(len(src))
+// An CorruptInputError is returned when invalid character is found in src.
 func Decode(dst, src []byte) (int, error) {
 	f := 0
 	t := 0
 	for len(src) > 0{
 		if len(src) < 5 {
 			w, err := decodeChunk(dst, src)
-			return t+w, err
+			if err > 0 {
+				return t, CorruptInputError(f+err)
+			}
+			return t+w, nil
 		}
 
 		_, err := decodeChunk(dst[:4], src[:5])
-		if err != nil {
-			return f ,err
+		if err > 0 {
+			return t ,CorruptInputError(f+err)
 		} else {
 			t += 4
 			f += 5
@@ -139,10 +167,11 @@ func Decode(dst, src []byte) (int, error) {
 			dst = dst[4:]
 		}
 	}
-	return f, nil
+	return t, nil
 }
 
-
+// EncodedLen returns the length in bytes of the base64 encoding of an input
+// buffer of length n.
 func EncodedLen(n int) int {
 	s := n / 4
 	r := n % 4
@@ -153,6 +182,8 @@ func EncodedLen(n int) int {
 	}
 }
 
+// DecodedLen returns the maximum length in bytes of the decoded data
+// corresponding to n bytes of base85-encoded data.
 func DecodedLen(n int) int {
 	s := n / 5
 	r := n % 5
@@ -162,8 +193,9 @@ func DecodedLen(n int) int {
 		return s * 4
 	}
 }
+
 type CorruptInputError int64
 
 func (e CorruptInputError) Error() string {
-	return "illegal ascii85 data at input byte " + strconv.FormatInt(int64(e), 10)
+	return "illegal base85 data at input byte " + strconv.FormatInt(int64(e), 10)
 }
